@@ -2,6 +2,21 @@
 
 import os
 
+# Set HuggingFace and temporary cache directories to persistent location on New Volume
+HF_CACHE_DIR = "/run/media/pravin/New Volume/huggingface-cache"
+TMP_DIR = os.path.join(HF_CACHE_DIR, "tmp")
+
+os.makedirs(HF_CACHE_DIR, exist_ok=True)
+os.makedirs(TMP_DIR, exist_ok=True)
+
+os.environ["HF_HOME"] = HF_CACHE_DIR
+os.environ["TRANSFORMERS_CACHE"] = HF_CACHE_DIR
+os.environ["HF_HUB_CACHE"] = os.path.join(HF_CACHE_DIR, "hub")
+os.environ["SENTENCE_TRANSFORMERS_HOME"] = HF_CACHE_DIR
+os.environ["TMPDIR"] = TMP_DIR
+
+
+
 # Model Configuration
 class ModelConfig:
     """Configuration for open-source AI models"""

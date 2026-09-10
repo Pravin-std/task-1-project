@@ -1,83 +1,102 @@
 import os
-from langchain.chains import RetrievalQA
-from langchain.llms import HuggingFacePipeline
-from langchain.prompts import PromptTemplate
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
-from utils.embedder import load_vector_db
+import traceback
+import logging
+from typing import Optional, List, Any
 import torch
+
+# Set HuggingFace and temporary cache directories to persistent location on New Volume
+HF_CACHE_DIR = "/run/media/pravin/New Volume/huggingface-cache"
+TMP_DIR = os.path.join(HF_CACHE_DIR, "tmp")
+
+os.makedirs(HF_CACHE_DIR, exist_ok=True)
+os.makedirs(TMP_DIR, exist_ok=True)
+
+os.environ["HF_HOME"] = HF_CACHE_DIR
+os.environ["TRANSFORMERS_CACHE"] = HF_CACHE_DIR
+os.environ["HF_HUB_CACHE"] = os.path.join(HF_CACHE_DIR, "hub")
+os.environ["SENTENCE_TRANSFORMERS_HOME"] = HF_CACHE_DIR
+os.environ["TMPDIR"] = TMP_DIR
+
+from langchain.chains import RetrievalQA
+
+try:
+    from langchain_core.language_models.llms import LLM
+except ImportError:
+    from langchain.llms.base import LLM
+
+try:
+    from langchain_core.prompts import PromptTemplate
+except ImportError:
+    from langchain.prompts import PromptTemplate
+
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+from utils.embedder import load_vector_db
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class FlanT5LLM(LLM):
+    """Custom LangChain LLM wrapper for google/flan-t5-small"""
+    model: Any = None
+    tokenizer: Any = None
+
+    @property
+    def _llm_type(self) -> str:
+        return "flan-t5-small"
+
+    def _call(self, prompt: str, stop: Optional[List[str]] = None, **kwargs: Any) -> str:
+        if self.tokenizer is None or self.model is None:
+            raise ValueError("FlanT5LLM model or tokenizer is not initialized.")
+        inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512)
+        with torch.no_grad():
+            outputs = self.model.generate(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs.get("attention_mask"),
+                max_new_tokens=256
+            )
+        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 def get_local_llm():
     """
-    Initialize a local open-source LLM using HuggingFace
-    Using a lightweight model that works well for Q&A tasks
+    Initialize local google/flan-t5-small stored on New Volume cache
     """
-    model_name = "microsoft/DialoGPT-medium"  # Lightweight conversational model
-    # Alternative: "distilbert-base-cased-distilled-squad" for Q&A specific
+    model_name = "google/flan-t5-small"
 
     try:
-        # Load tokenizer and model
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForCausalLM.from_pretrained(
+        tokenizer = AutoTokenizer.from_pretrained(
             model_name,
-            torch_dtype=torch.float32,  # Use float32 for CPU compatibility
-            device_map="auto" if torch.cuda.is_available() else None
+            cache_dir=HF_CACHE_DIR
         )
-
-        # Create pipeline
-        pipe = pipeline(
-            "text-generation",
-            model=model,
-            tokenizer=tokenizer,
-            max_length=512,
-            temperature=0.7,
-            do_sample=True,
-            device=0 if torch.cuda.is_available() else -1  # GPU if available, else CPU
+        model = AutoModelForSeq2SeqLM.from_pretrained(
+            model_name,
+            cache_dir=HF_CACHE_DIR,
+            torch_dtype=torch.float32,
+            low_cpu_mem_usage=False
         )
+        model.eval()
 
-        # Wrap in LangChain
-        llm = HuggingFacePipeline(pipeline=pipe)
+        llm = FlanT5LLM(model=model, tokenizer=tokenizer)
         return llm
 
     except Exception as e:
-        print(f"Error loading model {model_name}: {e}")
-        # Fallback to a simpler model
-        return get_fallback_llm()
+        err_msg = f"Error loading LLM model '{model_name}': {str(e)}"
+        logger.error(f"{err_msg}\n{traceback.format_exc()}")
+        raise RuntimeError(err_msg)
 
-def get_fallback_llm():
-    """
-    Fallback to a very lightweight model for systems with limited resources
-    """
-    try:
-        from transformers import pipeline
 
-        # Use a smaller, CPU-friendly model
-        pipe = pipeline(
-            "text2text-generation",
-            model="google/flan-t5-small",
-            device=-1  # Force CPU
-        )
-
-        llm = HuggingFacePipeline(pipeline=pipe)
-        return llm
-
-    except Exception as e:
-        print(f"Error with fallback model: {e}")
-        return None
 
 def get_hr_prompt_template():
     """
-    Create an HR-specific prompt template for better responses
+    Create an HR-specific prompt template compatible with Flan-T5
     """
-    template = """
-    You are an HR Assistant chatbot. Use the following context from HR documents to answer the question.
-    Be helpful, professional, and accurate. If you don't know the answer based on the context, say so.
+    template = """Answer the question based only on the following HR document context. If the answer cannot be found in the context, say "I could not find information about that in the HR documents."
 
-    Context from HR documents:
-    {context}
+Context:
+{context}
 
-    Question: {question}
+Question: {question}
 
-    HR Assistant Answer:"""
+Answer:"""
 
     return PromptTemplate(
         template=template,
@@ -88,25 +107,21 @@ def get_qa_chain():
     """
     Create a QA chain using open-source components
     """
-    # Load vector database
     vector_db = load_vector_db()
 
     if vector_db is None:
-        return None
+        raise ValueError("Vector database is empty or not loaded. Please ensure an HR PDF document is uploaded and indexed.")
 
-    # Get retriever
     retriever = vector_db.as_retriever(
         search_type="similarity",
-        search_kwargs={"k": 3}  # Retrieve top 3 relevant chunks
+        search_kwargs={"k": 3}
     )
 
-    # Get local LLM
     llm = get_local_llm()
 
     if llm is None:
-        return None
+        raise ValueError("LLM model failed to load.")
 
-    # Create QA chain with custom prompt
     qa_chain = RetrievalQA.from_chain_type(
         llm=llm,
         chain_type="stuff",
@@ -119,22 +134,54 @@ def get_qa_chain():
 
     return qa_chain
 
-def simple_qa_response(question, max_retries=2):
+def simple_qa_response(question, max_retries=1):
     """
-    Simple Q&A function with error handling and retries
+    Simple Q&A function with transparent error logging, source citations, and fallback logic.
     """
-    for attempt in range(max_retries):
-        try:
-            qa_chain = get_qa_chain()
-            if qa_chain is None:
-                return "Sorry, the HR assistant is currently unavailable. Please try again later."
+    try:
+        qa_chain = get_qa_chain()
 
+        if hasattr(qa_chain, "invoke"):
+            result = qa_chain.invoke({"query": question})
+        else:
             result = qa_chain({"query": question})
-            return result["result"]
 
-        except Exception as e:
-            print(f"Attempt {attempt + 1} failed: {e}")
-            if attempt == max_retries - 1:
-                return "I'm having trouble processing your question right now. Please try rephrasing or contact HR directly."
+        answer = result.get("result", "").strip()
+        source_docs = result.get("source_documents", [])
 
-    return "Service temporarily unavailable."
+        # Check if answer indicates missing info or fallback
+        lower_ans = answer.lower()
+        not_found_triggers = [
+            "could not find", "not found", "cannot find", "not available",
+            "no information", "don't know", "does not mention", "not mentioned"
+        ]
+
+        if any(trigger in lower_ans for trigger in not_found_triggers):
+            return "I could not find information about that in the uploaded HR documents."
+
+        # Format source document citations
+        citations = []
+        seen = set()
+        for doc in source_docs:
+            src = doc.metadata.get("source", "HR_Policy_Test_Dataset.pdf")
+            page = doc.metadata.get("page")
+            key = (src, page)
+            if key not in seen:
+                seen.add(key)
+                if page:
+                    citations.append(f"📄 **Source:** `{src}` (Page {page})")
+                else:
+                    citations.append(f"📄 **Source:** `{src}`")
+
+        if citations:
+            return f"{answer}\n\n" + "\n".join(citations)
+        else:
+            return answer
+
+    except Exception as e:
+        err_trace = traceback.format_exc()
+        logger.error(f"QA Error: {e}\n{err_trace}")
+        return f"System Error: {str(e)}"
+
+
+

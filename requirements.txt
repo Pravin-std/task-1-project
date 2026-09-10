@@ -27,12 +27,10 @@ spacy>=3.6.0
 textblob  # for sentiment analysis
 
 # Database & Authentication
-sqlite3  # built-in with Python
 bcrypt
 pandas
 
 # Email & Notifications
-smtplib  # built-in with Python
 
 # Dev/Utility
 requests

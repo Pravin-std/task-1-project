@@ -1,8 +1,23 @@
-import streamlit as st
 import os
+
+# Set HuggingFace and temporary cache directories to persistent location on New Volume
+HF_CACHE_DIR = "/run/media/pravin/New Volume/huggingface-cache"
+TMP_DIR = os.path.join(HF_CACHE_DIR, "tmp")
+
+os.makedirs(HF_CACHE_DIR, exist_ok=True)
+os.makedirs(TMP_DIR, exist_ok=True)
+
+os.environ["HF_HOME"] = HF_CACHE_DIR
+os.environ["TRANSFORMERS_CACHE"] = HF_CACHE_DIR
+os.environ["HF_HUB_CACHE"] = os.path.join(HF_CACHE_DIR, "hub")
+os.environ["SENTENCE_TRANSFORMERS_HOME"] = HF_CACHE_DIR
+os.environ["TMPDIR"] = TMP_DIR
+
+import streamlit as st
 from utils.loader import load_pdf_chunks
 from utils.embedder import create_vector_db, load_vector_db
 from utils.retriever import simple_qa_response
+
 
 st.set_page_config(
     page_title="HRBot - AI HR Assistant",
@@ -48,7 +63,28 @@ st.markdown("""
 st.markdown('<h1 class="main-header">🤖 HRBot - AI HR Assistant</h1>', unsafe_allow_html=True)
 st.markdown('<p class="sub-header">Your intelligent HR companion powered by open-source AI</p>', unsafe_allow_html=True)
 
+# System & Cache Diagnostic Expander
+with st.expander("📊 Disk Space & HuggingFace Cache Diagnostic Info"):
+    import shutil
+    root_stat = shutil.disk_usage("/")
+    nv_stat = shutil.disk_usage("/run/media/pravin/New Volume")
+    
+    st.write(f"**Root (/) Free Space:** {root_stat.free / (1024**3):.2f} GB / {root_stat.total / (1024**3):.2f} GB")
+    st.write(f"**New Volume Free Space:** {nv_stat.free / (1024**3):.2f} GB / {nv_stat.total / (1024**3):.2f} GB")
+    st.write(f"**HuggingFace Cache Location:** `{os.environ.get('HF_HOME')}`")
+    st.write(f"**Temporary Directory (TMPDIR):** `{os.environ.get('TMPDIR')}`")
+    
+    if st.button("🧪 Test Loading google/flan-t5-small Model"):
+        try:
+            with st.spinner("Loading google/flan-t5-small into New Volume cache..."):
+                from utils.retriever import get_local_llm
+                llm = get_local_llm()
+                st.success("✅ google/flan-t5-small loaded successfully!")
+        except Exception as e:
+            st.error(f"Failed to load LLM model: {e}")
+
 # Sidebar for navigation and file upload
+
 with st.sidebar:
     st.header("📁 Document Management")
 
@@ -77,13 +113,17 @@ with st.sidebar:
     • **No API keys required!**
     """)
 
-# Create directories if not present
-os.makedirs("data", exist_ok=True)
-os.makedirs("vectorstore", exist_ok=True)
+# Absolute directory paths relative to app.py location
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+VECTORSTORE_DIR = os.path.join(BASE_DIR, "vectorstore")
+
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(VECTORSTORE_DIR, exist_ok=True)
 
 # Handle file upload
 if uploaded_file:
-    file_path = os.path.join("data", uploaded_file.name)
+    file_path = os.path.join(DATA_DIR, uploaded_file.name)
 
     # Save uploaded file
     with open(file_path, "wb") as f:
@@ -100,8 +140,22 @@ if uploaded_file:
 # Main chat interface
 st.markdown("---")
 
-# Check if vector database exists
+# Check if vector database exists, auto-index data directory if PDF exists
 vector_db = load_vector_db()
+if vector_db is None and os.path.exists(DATA_DIR):
+    pdf_files = [os.path.join(DATA_DIR, f) for f in os.listdir(DATA_DIR) if f.endswith(".pdf")]
+    if pdf_files:
+        try:
+            chunks = load_pdf_chunks(pdf_files[0])
+            create_vector_db(chunks)
+            vector_db = load_vector_db()
+        except Exception as e:
+            st.error(f"Auto-indexing error: {e}")
+
+if vector_db is None and uploaded_file:
+    # Upload process will populate vector_db
+    pass
+
 if vector_db is not None:
     st.subheader("💬 Ask Your HR Questions")
 
@@ -115,6 +169,39 @@ if vector_db is not None:
         • How does the performance review process work?
         • What benefits are available to employees?
         """)
+
+    with st.expander("🧪 Automated System Self-Test Verification"):
+        st.markdown("Click below to test the Q&A chain on the required evaluation test cases.")
+        if st.button("▶ Run Full System Verification Test"):
+            if os.path.exists(DATA_DIR):
+                pdf_files = [os.path.join(DATA_DIR, f) for f in os.listdir(DATA_DIR) if f.endswith(".pdf")]
+                if pdf_files:
+                    with st.spinner("Indexing PDF with page metadata..."):
+                        chunks = load_pdf_chunks(pdf_files[0])
+                        create_vector_db(chunks)
+
+            q1 = "How many sick leave days are provided each year?"
+            q2 = "What are the core working hours for remote employees?"
+            q3 = "What is the policy on space travel to Mars?"
+            
+            with st.spinner("Testing Question 1 (Sick Leave)..."):
+                a1 = simple_qa_response(q1)
+            st.markdown(f"**Question 1:** `{q1}`")
+            st.markdown(f"**Answer 1:**\n{a1}")
+            
+            st.markdown("---")
+            with st.spinner("Testing Question 2 (Remote Core Hours)..."):
+                a2 = simple_qa_response(q2)
+            st.markdown(f"**Question 2:** `{q2}`")
+            st.markdown(f"**Answer 2:**\n{a2}")
+
+            st.markdown("---")
+            with st.spinner("Testing Question 3 (Out-of-Document)..."):
+                a3 = simple_qa_response(q3)
+            st.markdown(f"**Question 3:** `{q3}`")
+            st.markdown(f"**Answer 3:**\n`{a3}`")
+
+
 
     # Chat interface
     user_input = st.text_input(
@@ -136,7 +223,9 @@ if vector_db is not None:
                 st.markdown(f'<div style="background-color: #f8f9fa; padding: 1rem; border-radius: 0.5rem; border-left: 4px solid #1f77b4;">{response}</div>', unsafe_allow_html=True)
 
             except Exception as e:
+                import traceback
                 st.error(f"Sorry, I encountered an error: {str(e)}")
+                st.code(traceback.format_exc())
                 st.info("Please try rephrasing your question or contact HR directly.")
 
     # Quick actions
