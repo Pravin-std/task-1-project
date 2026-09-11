@@ -9,7 +9,7 @@ except ImportError:
     except ImportError:
         from langchain.schema import Document
 
-def load_pdf_chunks(file_path, chunk_size=500):
+def load_pdf_chunks(file_path, chunk_size=400):
     """
     Load a PDF file and split it into text chunks with page and source metadata.
     Args:

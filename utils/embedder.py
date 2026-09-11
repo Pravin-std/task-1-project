@@ -58,6 +58,17 @@ def create_vector_db(chunks, collection_name="hr_documents"):
     embeddings = get_embedding_model()
     os.makedirs(VECTORSTORE_DIR, exist_ok=True)
 
+    try:
+        old_db = Chroma(
+            persist_directory=VECTORSTORE_DIR,
+            embedding_function=embeddings,
+            collection_name=collection_name
+        )
+        if hasattr(old_db, "delete_collection"):
+            old_db.delete_collection()
+    except Exception:
+        pass
+
     vectordb = Chroma.from_documents(
         documents=docs,
         embedding=embeddings,

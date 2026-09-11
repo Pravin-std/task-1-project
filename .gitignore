@@ -18,6 +18,8 @@ ENV/
 
 # ── Environment Variables ─────────────────────────────────────────────────────
 .env
+.env.*
+!.env.example
 
 # ── HRBot Runtime Directories ────────────────────────────────────────────────
 # Auto-created at startup; contain user data & model weights

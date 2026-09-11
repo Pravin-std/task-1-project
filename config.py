@@ -1,6 +1,8 @@
 # Configuration file for HRBot - Open Source AI HR Assistant
 
 import os
+from dotenv import load_dotenv
+load_dotenv()
 
 # Set HuggingFace and temporary cache directories to persistent location on New Volume
 HF_CACHE_DIR = "/run/media/pravin/New Volume/huggingface-cache"
