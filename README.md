@@ -321,9 +321,7 @@ Once you have uploaded an HR policy document, try asking:
 
 ---
 
-## 🤝 Contributing
 
-Contributions are welcome and appreciated! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 
 **Quick start:**
 
@@ -340,29 +338,6 @@ git commit -m "feat: add multi-document query support"
 git push origin feature/your-feature-name
 ```
 
-Please follow the [Code of Conduct](CONTRIBUTING.md#code-of-conduct) in all interactions.
 
----
-
-## 📄 License
-
-This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
-
----
-
-## 👤 Author
-
-**Vino K**
-
-- GitHub: [@K-vino](https://github.com/K-vino)
-- Project Link: [https://github.com/K-vino/HR-chatbot](https://github.com/K-vino/HR-chatbot)
-
----
-
-<div align="center">
-
-**If you find this project useful, please consider giving it a ⭐ on GitHub!**
-
-*Built with ❤️ using open-source AI*
 
 </div>
